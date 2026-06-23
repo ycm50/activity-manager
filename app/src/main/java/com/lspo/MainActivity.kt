@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
@@ -81,6 +82,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
         enableEdgeToEdge()
+
+        // Shizuku 权限请求 —— Binder 就绪后自动检查/请求
+        Shizuku.addBinderReceivedListenerSticky(::onBinderReady)
+        Shizuku.addRequestPermissionResultListener { requestCode, grantResult ->
+            if (requestCode == SHIZUKU_REQUEST_CODE) {
+                val msg = if (grantResult == PackageManager.PERMISSION_GRANTED)
+                    "Shizuku 权限已获取" else "Shizuku 权限被拒绝"
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
+
         setContent {
             LspoTheme {
                 ActivityMonitorScreen(
@@ -96,10 +108,26 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        Shizuku.removeBinderReceivedListener(::onBinderReady)
         super.onDestroy()
     }
 
+    private fun onBinderReady() {
+        if (Shizuku.isPreV11()) {
+            Toast.makeText(this, "Shizuku 版本过旧，不支持", Toast.LENGTH_LONG).show()
+            return
+        }
 
+        when (Shizuku.checkSelfPermission()) {
+            PackageManager.PERMISSION_GRANTED -> {
+                // 已有权限，直接使用
+            }
+            PackageManager.PERMISSION_DENIED -> {
+                // 请求权限 —— 弹出 Shizuku 授权对话框
+                Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+            }
+        }
+    }
 
     private fun copyToClipboard(text: String) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -286,6 +314,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val SHIZUKU_REQUEST_CODE = 1001
         private const val CHANNEL_ID = "activity_monitor_save"
         private var NOTIFICATION_ID = 1000
     }

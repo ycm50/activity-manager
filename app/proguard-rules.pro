@@ -1,9 +1,4 @@
-# Add project specific R8 rules here.
-# AGP will combine all keep rule files in src/main/keepRules to pass to R8
-#
-# For more details, see
-#   https://d.android.com/r/tools/r8/keep-rules
-
+# Add project specific ProGuard rules here.
 # Keep Xposed module entry
 -keep class com.lspo.ActivityHooker { *; }
 
