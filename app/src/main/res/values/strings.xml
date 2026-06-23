@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Activity Monitor</string>
+    <string name="app_desc">Monitor all Activity.onCreate calls in scoped apps</string>
+</resources>

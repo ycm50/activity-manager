@@ -1,0 +1,12 @@
+# Add project specific R8 rules here.
+# AGP will combine all keep rule files in src/main/keepRules to pass to R8
+#
+# For more details, see
+#   https://d.android.com/r/tools/r8/keep-rules
+
+# Keep Xposed module entry
+-keep class com.lspo.ActivityHooker { *; }
+
+# Keep libxposed API classes
+-keep class io.github.libxposed.api.** { *; }
+-keep class io.github.libxposed.service.** { *; }
