@@ -18,6 +18,11 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.MutableState
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
@@ -36,7 +41,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -83,21 +87,18 @@ class MainActivity : ComponentActivity() {
         createNotificationChannel()
         enableEdgeToEdge()
 
-        // Shizuku 权限请求 —— Binder 就绪后自动检查/请求
-        Shizuku.addBinderReceivedListenerSticky(::onBinderReady)
-        Shizuku.addRequestPermissionResultListener { requestCode, grantResult ->
-            if (requestCode == SHIZUKU_REQUEST_CODE) {
-                val msg = if (grantResult == PackageManager.PERMISSION_GRANTED)
-                    "Shizuku 权限已获取" else "Shizuku 权限被拒绝"
-                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-            }
-        }
-
         setContent {
+            val permissionState = remember { mutableStateOf(ShizukuState.IDLE) }
+            val permissionText = remember { mutableStateOf("Shizuku") }
+
             LspoTheme {
                 ActivityMonitorScreen(
                     contentResolver = contentResolver,
-                    onSave = { records -> saveToDownloads(records) },
+                    permissionState = permissionState.value,
+                    permissionText = permissionText.value,
+                    onRequestShizuku = {
+                        requestShizukuPermission(permissionState, permissionText)
+                    },
                     onClear = { clearRecords() },
                     onCopyActivity = { text -> copyToClipboard(text) },
                     onDisablePackage = { pkg -> disablePackage(pkg) },
@@ -108,24 +109,74 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        Shizuku.removeBinderReceivedListener(::onBinderReady)
         super.onDestroy()
     }
 
-    private fun onBinderReady() {
-        if (Shizuku.isPreV11()) {
-            Toast.makeText(this, "Shizuku 版本过旧，不支持", Toast.LENGTH_LONG).show()
-            return
+    private fun requestShizukuPermission(
+        state: MutableState<ShizukuState>,
+        label: MutableState<String>
+    ) {
+        // Already granted — no-op, just show current info
+        if (state.value == ShizukuState.GRANTED) return
+
+        state.value = ShizukuState.REQUESTING
+        label.value = "..."
+
+        val deferred = CompletableDeferred<Int?>()
+
+        val listener = { requestCode: Int, grantResult: Int ->
+            if (requestCode == SHIZUKU_REQUEST_CODE) {
+                deferred.complete(grantResult)
+            }
         }
 
-        when (Shizuku.checkSelfPermission()) {
-            PackageManager.PERMISSION_GRANTED -> {
-                // 已有权限，直接使用
+        Shizuku.addRequestPermissionResultListener(listener)
+
+        // 先检查 Shizuku 是否可用
+        if (!Shizuku.ping()) {
+            // Shizuku 不可用，尝试通过 Sui 初始化
+            try {
+                // Sui 的 Shizuku provider 会在 Binder 就绪后自动连接
+                // 这里直接尝试请求权限，Sui 会拦截
+            } catch (_: Exception) { }
+        }
+
+        Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+
+        lifecycleScope.launch {
+            try {
+                val result = withTimeout(5000L) { deferred.await() }
+                if (result == PackageManager.PERMISSION_GRANTED) {
+                    state.value = ShizukuState.GRANTED
+                    // 检测权限来源
+                    label.value = detectPermissionSource()
+                } else {
+                    // 权限被拒绝
+                    state.value = ShizukuState.IDLE
+                    label.value = "Shizuku"
+                    Toast.makeText(this@MainActivity, "权限被拒绝", Toast.LENGTH_SHORT).show()
+                }
+            } catch (_: TimeoutCancellationException) {
+                // 5s 超时，重置按钮
+                state.value = ShizukuState.IDLE
+                label.value = "Shizuku"
+                Toast.makeText(this@MainActivity, "获取权限超时(5s)", Toast.LENGTH_SHORT).show()
+            } finally {
+                Shizuku.removeRequestPermissionResultListener(listener)
             }
-            PackageManager.PERMISSION_DENIED -> {
-                // 请求权限 —— 弹出 Shizuku 授权对话框
-                Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+        }
+    }
+
+    private fun detectPermissionSource(): String {
+        return try {
+            val uid = Shizuku.getUid()
+            when (uid) {
+                0 -> "sui(root)"
+                2000 -> "shizuku(shell)"
+                else -> "shizuku(uid=$uid)"
             }
+        } catch (_: Exception) {
+            "shizuku(?)"
         }
     }
 
@@ -324,7 +375,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ActivityMonitorScreen(
     contentResolver: ContentResolver,
-    onSave: (List<ActivityRecord>) -> Unit,
+    permissionState: ShizukuState,
+    permissionText: String,
+    onRequestShizuku: () -> Unit,
     onClear: () -> Unit,
     onCopyActivity: (String) -> Unit,
     onDisablePackage: (String) -> Unit,
@@ -371,12 +424,19 @@ fun ActivityMonitorScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
                 actions = {
-                    IconButton(onClick = { onSave(filtered.toList()) }) {
-                        Icon(
-                            Icons.Filled.Save,
-                            contentDescription = "Save",
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
+                    IconButton(onClick = onRequestShizuku) {
+                        if (permissionState == ShizukuState.REQUESTING) {
+                            Text(
+                                text = "...",
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        } else {
+                            Text(
+                                text = permissionText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
                     }
                 }
             )
@@ -548,6 +608,12 @@ private suspend fun loadRecords(
     } catch (_: Exception) {
         // Provider not ready or no permission
     }
+}
+
+enum class ShizukuState {
+    IDLE,
+    REQUESTING,
+    GRANTED
 }
 
 private fun applyFilter(
