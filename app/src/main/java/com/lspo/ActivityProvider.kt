@@ -74,11 +74,13 @@ class ActivityProvider : ContentProvider() {
     }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
+        val count: Int
         synchronized(records) {
-            val count = records.size
+            count = records.size
             records.clear()
-            return count
         }
+        context?.contentResolver?.notifyChange(uri, null)
+        return count
     }
 
     override fun getType(uri: Uri): String = "vnd.android.cursor.dir/vnd.lspo.activity"
