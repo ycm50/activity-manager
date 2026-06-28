@@ -116,11 +116,73 @@ class MainActivity : ComponentActivity() {
         state: MutableState<ShizukuState>,
         label: MutableState<String>
     ) {
-        // Already granted — no-op, just show current info
-        if (state.value == ShizukuState.GRANTED) return
+        // 如果已连接，先清除状态，再重新申请
+        if (state.value == ShizukuState.GRANTED) {
+            state.value = ShizukuState.IDLE
+            label.value = "Shizuku"
+        }
 
         state.value = ShizukuState.REQUESTING
-        label.value = "..."
+        label.value = "Shizuku..."
+
+        // ===== Phase 1: 先走 Shizuku 通道 =====
+        tryPhase1(state, label)
+    }
+
+    private fun tryPhase1(
+        state: MutableState<ShizukuState>,
+        label: MutableState<String>
+    ) {
+        val deferred = CompletableDeferred<Int?>()
+
+        val listener = { requestCode: Int, grantResult: Int ->
+            if (requestCode == SHIZUKU_REQUEST_CODE) {
+                deferred.complete(grantResult)
+            }
+        }
+
+        try {
+            Shizuku.addRequestPermissionResultListener(listener)
+            Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+        } catch (_: Exception) {
+            // Shizuku 未运行（binder 不存在），直接 fallback 到 Sui
+            Shizuku.removeRequestPermissionResultListener(listener)
+            tryPhase2(state, label)
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                val result = withTimeout(5000L) { deferred.await() }
+                handleResult(result, state, label)
+            } catch (_: TimeoutCancellationException) {
+                // Phase 1 超时 → fallback 到 Phase 2: Sui
+                Shizuku.removeRequestPermissionResultListener(listener)
+                Toast.makeText(this@MainActivity, "Shizuku 无响应，尝试 Sui", Toast.LENGTH_SHORT).show()
+                tryPhase2(state, label)
+            }
+        }
+    }
+
+    private fun tryPhase2(
+        state: MutableState<ShizukuState>,
+        label: MutableState<String>
+    ) {
+        // 手动初始化 Sui（已在 App.attachBaseContext 中禁用了自动初始化）
+        val suiAvailable = try {
+            rikka.sui.Sui.init(this.packageName)
+        } catch (_: Exception) {
+            false
+        }
+
+        if (!suiAvailable) {
+            state.value = ShizukuState.IDLE
+            label.value = "Shizuku"
+            Toast.makeText(this@MainActivity, "Sui 不可用", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        label.value = "Sui..."
 
         val deferred = CompletableDeferred<Int?>()
 
@@ -130,51 +192,57 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        Shizuku.addRequestPermissionResultListener(listener)
-
-        // 先检查 Shizuku 是否可用
-        if (!Shizuku.ping()) {
-            // Shizuku 不可用，尝试通过 Sui 初始化
-            try {
-                // Sui 的 Shizuku provider 会在 Binder 就绪后自动连接
-                // 这里直接尝试请求权限，Sui 会拦截
-            } catch (_: Exception) { }
+        try {
+            Shizuku.addRequestPermissionResultListener(listener)
+            Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+        } catch (_: Exception) {
+            // Sui binder 也不可用，安全重置
+            Shizuku.removeRequestPermissionResultListener(listener)
+            state.value = ShizukuState.IDLE
+            label.value = "Shizuku"
+            Toast.makeText(this@MainActivity, "权限服务不可用", Toast.LENGTH_SHORT).show()
+            return
         }
-
-        Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
 
         lifecycleScope.launch {
             try {
                 val result = withTimeout(5000L) { deferred.await() }
-                if (result == PackageManager.PERMISSION_GRANTED) {
-                    state.value = ShizukuState.GRANTED
-                    // 检测权限来源
-                    label.value = detectPermissionSource()
-                } else {
-                    // 权限被拒绝
-                    state.value = ShizukuState.IDLE
-                    label.value = "Shizuku"
-                    Toast.makeText(this@MainActivity, "权限被拒绝", Toast.LENGTH_SHORT).show()
-                }
+                handleResult(result, state, label)
             } catch (_: TimeoutCancellationException) {
-                // 5s 超时，重置按钮
                 state.value = ShizukuState.IDLE
                 label.value = "Shizuku"
-                Toast.makeText(this@MainActivity, "获取权限超时(5s)", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "获取权限超时", Toast.LENGTH_SHORT).show()
             } finally {
                 Shizuku.removeRequestPermissionResultListener(listener)
             }
         }
     }
 
+    private fun handleResult(
+        result: Int?,
+        state: MutableState<ShizukuState>,
+        label: MutableState<String>
+    ) {
+        if (result == PackageManager.PERMISSION_GRANTED) {
+            state.value = ShizukuState.GRANTED
+            label.value = detectPermissionSource()
+        } else {
+            state.value = ShizukuState.IDLE
+            label.value = "Shizuku"
+            Toast.makeText(this@MainActivity, "权限被拒绝", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun detectPermissionSource(): String {
         return try {
             val uid = Shizuku.getUid()
-            when (uid) {
-                0 -> "sui(root)"
-                2000 -> "shizuku(shell)"
-                else -> "shizuku(uid=$uid)"
+            val level = when (uid) {
+                0 -> "root"
+                2000 -> "shell"
+                else -> "uid=$uid"
             }
+            val source = if (rikka.sui.Sui.isSui()) "sui" else "shizuku"
+            "$source($level)"
         } catch (_: Exception) {
             "shizuku(?)"
         }
@@ -424,18 +492,28 @@ fun ActivityMonitorScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
                 actions = {
-                    IconButton(onClick = onRequestShizuku) {
-                        if (permissionState == ShizukuState.REQUESTING) {
-                            Text(
-                                text = "...",
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        } else {
-                            Text(
-                                text = permissionText,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                    androidx.compose.material3.Surface(
+                        onClick = onRequestShizuku,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            if (permissionState == ShizukuState.REQUESTING) {
+                                Text(
+                                    text = "...",
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            } else {
+                                Text(
+                                    text = permissionText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
                     }
                 }
