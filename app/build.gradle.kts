@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.lspo"
+    namespace = "com.activity.manager"
     compileSdk {
         version = release(37) {
             minorApiLevel = 0
@@ -12,7 +12,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.lspo"
+        applicationId = "com.activity.manager"
         minSdk = 34
         targetSdk = 36
         versionCode = 1

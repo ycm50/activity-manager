@@ -1,4 +1,4 @@
-package com.lspo
+package com.activity.manager
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -67,7 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.lspo.ui.theme.LspoTheme
+import com.activity.manager.ui.theme.LspoTheme
 import kotlinx.coroutines.Dispatchers
 import rikka.shizuku.Shizuku
 import kotlinx.coroutines.launch

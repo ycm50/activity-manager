@@ -1,4 +1,4 @@
-package com.lspo
+package com.activity.manager
 
 import android.content.ContentProvider
 import android.content.ContentValues
@@ -87,7 +87,7 @@ class ActivityProvider : ContentProvider() {
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
 
     companion object {
-        const val AUTHORITY = "com.lspo.provider"
+        const val AUTHORITY = "com.activity.manager.provider"
         val CONTENT_URI = Uri.parse("content://$AUTHORITY/activities")
     }
 }

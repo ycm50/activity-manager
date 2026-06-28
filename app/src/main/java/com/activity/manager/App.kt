@@ -1,4 +1,4 @@
-package com.lspo
+package com.activity.manager
 
 import android.app.Application
 import rikka.shizuku.ShizukuProvider
