@@ -1,8 +1,5 @@
 package com.activity.manager
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import rikka.shizuku.Shizuku
 
 /**
  * Disables and re-enables packages/components through Shizuku/Sui.
@@ -15,7 +12,7 @@ import rikka.shizuku.Shizuku
  * Arg builders are pure and suspend entry points return an [Outcome] instead of showing a
  * toast, so [DisableHistoryStore] can record exactly what succeeded.
  */
-class ComponentDisabler {
+class ComponentDisabler(private val shell: ShizukuShell = ShizukuShell()) {
 
     sealed interface Outcome {
         data class Success(val message: String) : Outcome
@@ -44,27 +41,25 @@ class ComponentDisabler {
         "Restored:${entry.component}"
     )
 
-    private suspend fun execute(argv: Array<String>, successMessage: String): Outcome =
-        withContext(Dispatchers.IO) {
-            try {
-                val process = Shizuku.newProcess(argv, null, null)
-                val exitCode = process.waitFor()
-                @Suppress("DEPRECATION")
-                val stdout = process.inputStream.bufferedReader().readText().trim()
-                val stderr = process.errorStream.bufferedReader().readText().trim()
-                val detail = stdout.ifEmpty { stderr }
+    /**
+     * Runs one `pm` command through [ShizukuShell].
+     *
+     * Sharing the runner (rather than spawning here) keeps a single place responsible for
+     * draining the child's pipes concurrently — reading after `waitFor()` deadlocks when a
+     * command writes more than the pipe buffer holds.
+     */
+    private suspend fun execute(argv: Array<String>, successMessage: String): Outcome {
+        val result = shell.run(argv)
+        val detail = result.stdout.trim().ifEmpty { result.stderr.trim() }
 
-                // "already" means the requested state was already in effect, which is a success.
-                val ok = exitCode == 0 || detail.contains("already", ignoreCase = true)
-                if (ok) {
-                    Outcome.Success(successMessage)
-                } else {
-                    Outcome.Failure(detail.ifEmpty { "exit=$exitCode" })
-                }
-            } catch (e: Exception) {
-                Outcome.Failure(e.message ?: e.javaClass.simpleName)
-            }
+        // "already" means the requested state was already in effect, which counts as success.
+        val ok = result.isSuccess || detail.contains("already", ignoreCase = true)
+        return if (ok) {
+            Outcome.Success(successMessage)
+        } else {
+            Outcome.Failure(detail.ifEmpty { "exit=" + result.exitCode })
         }
+    }
 
     companion object {
         /** Binary name of the package manager; never routed through a shell. */

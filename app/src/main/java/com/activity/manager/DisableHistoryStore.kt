@@ -61,6 +61,59 @@ class DisableHistoryStore(context: Context) {
         }
     }
 
+    /**
+     * Replaces the stored entries wholesale, used by 更新 after re-checking the device.
+     */
+    fun replaceAll(entries: List<DisableHistoryEntry>) {
+        synchronized(this) { persist(entries.sortedByDescending { it.disabledAt }) }
+    }
+
+    /** Applies a per-entry state update produced by 更新. */
+    fun updateStates(updates: Map<Long, Boolean>) {
+        if (updates.isEmpty()) return
+        synchronized(this) {
+            val existing = DisableHistoryCodec.decode(prefs.getString(KEY_ENTRIES, null))
+            persist(existing.map { entry ->
+                updates[entry.id]?.let { entry.copy(restored = it) } ?: entry
+            })
+        }
+    }
+
+    /** Removes entries already marked restored; returns how many were removed. */
+    fun clearRestored(): Int = synchronized(this) {
+        val existing = DisableHistoryCodec.decode(prefs.getString(KEY_ENTRIES, null))
+        val kept = existing.filterNot { it.restored }
+        val removed = existing.size - kept.size
+        if (removed > 0) persist(kept)
+        removed
+    }
+
+    /**
+     * Records that 更新 just ran.
+     *
+     * 清除已恢复 refuses to delete anything unless the state was refreshed in the same
+     * session, so a stale flag cannot cause the user to lose entries they still need.
+     */
+    fun markSynced(at: Long = System.currentTimeMillis()) {
+        synchronized(this) { prefs.edit().putLong(KEY_LAST_SYNC, at).apply() }
+    }
+
+    /** Timestamp of the last 更新, or null when it has never run. */
+    fun lastSyncedAt(): Long? = synchronized(this) {
+        val value = prefs.getLong(KEY_LAST_SYNC, 0L)
+        value.takeIf { it > 0L }
+    }
+
+    /**
+     * Consumes the sync mark.
+     *
+     * Called after 清除已恢复 so one 更新 authorises one clear: without this, a single
+     * refresh made hours ago would keep permitting deletions against stale state.
+     */
+    fun clearSyncMark() {
+        synchronized(this) { prefs.edit().remove(KEY_LAST_SYNC).apply() }
+    }
+
     /** History entries that still need restoring, oldest first. */
     fun pending(): List<DisableHistoryEntry> = synchronized(this) {
         DisableHistoryCodec.decode(prefs.getString(KEY_ENTRIES, null))
@@ -87,6 +140,7 @@ class DisableHistoryStore(context: Context) {
     private companion object {
         const val PREFS_NAME = "activity_monitor_history"
         const val KEY_ENTRIES = "disable_history"
+        const val KEY_LAST_SYNC = "last_sync_at"
         const val MAX_ENTRIES = 500
     }
 }
