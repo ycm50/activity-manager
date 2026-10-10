@@ -38,13 +38,6 @@
             tools:ignore="ExportedContentProvider" />
 
         <provider
-            android:name=".ActivityProvider"
-            android:authorities="${applicationId}.provider"
-            android:exported="true"
-            tools:ignore="ExportedContentProvider" />
-
-
-        <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
             android:enabled="true"

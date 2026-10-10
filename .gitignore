@@ -13,5 +13,22 @@ local.properties
 .kotlin/
 .reasonix/
 *.apk
+/app/release/
 build-err.txt
 shizuku.java
+
+# 签名密钥库：本项目使用**公开**的固定密钥，必须入库
+# （开源项目，任何人可自行构建；固定不变才能覆盖安装历史版本）
+# 注意规则顺序：gitignore 最后一条匹配生效，故先忽略、再取反。
+*.jks
+*.keystore
+!cert/my.jks
+
+# 构建产物
+/app/build/
+/app/release/
+app/build-err.txt
+
+# 工具/编辑器
+*.log
+.idea/caches/
