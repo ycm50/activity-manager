@@ -50,13 +50,20 @@ import java.util.Locale
 fun DisableHistoryScreen(
     entries: List<DisableHistoryEntry>,
     busy: Boolean,
+    /** True when 更新 has run in this session, i.e. the restored flags are trustworthy. */
+    synced: Boolean,
+    /** Non-null while 更新 is running, e.g. "更新中 3/12". */
+    syncProgress: String?,
     onBack: () -> Unit,
     onRestore: (DisableHistoryEntry) -> Unit,
-    onRestoreAll: () -> Unit
+    onRestoreAll: () -> Unit,
+    onSync: () -> Unit,
+    onClearRestored: () -> Unit
 ) {
     BackHandler(onBack = onBack)
 
     val pendingCount = entries.count { !it.restored }
+    val restoredCount = entries.size - pendingCount
 
     Scaffold(
         topBar = {
@@ -75,12 +82,20 @@ fun DisableHistoryScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
                 actions = {
+                    TextButton(onClick = onSync, enabled = !busy) {
+                        Text(
+                            text = if (busy) "更新中..." else "更新",
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                     if (pendingCount > 0) {
                         TextButton(onClick = onRestoreAll, enabled = !busy) {
-                            Text(
-                                text = if (busy) "恢复中..." else "全部恢复",
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                            Text("全部恢复", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+                    if (restoredCount > 0) {
+                        TextButton(onClick = onClearRestored, enabled = !busy) {
+                            Text("清除已恢复", color = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     }
                 }
@@ -95,10 +110,13 @@ fun DisableHistoryScreen(
         ) {
             Spacer(Modifier.height(8.dp))
             Text(
-                text = if (entries.isEmpty()) {
+                text = if (syncProgress != null) {
+                    syncProgress
+                } else if (entries.isEmpty()) {
                     "还没有禁用记录"
                 } else {
-                    "共 ${entries.size} 条，待恢复 ${pendingCount} 条"
+                    "共 ${entries.size} 条，待恢复 ${pendingCount} 条，已恢复 ${restoredCount} 条" +
+                        if (!synced && restoredCount > 0) "（清除已恢复前请先点「更新」）" else ""
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

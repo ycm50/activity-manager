@@ -3,6 +3,7 @@ package com.activity.manager
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.Executors
 import rikka.shizuku.Shizuku
 
 /**
@@ -25,16 +26,43 @@ class ShizukuShell {
     suspend fun run(argv: Array<String>): Result = withContext(Dispatchers.IO) {
         try {
             val process = Shizuku.newProcess(argv, null, null)
+
+            // Drain both pipes CONCURRENTLY with waitFor().
+            //
+            // Reading after waitFor() deadlocks on large output: the child fills the ~64 KB
+            // pipe buffer, blocks in write(), and therefore never exits, so waitFor() never
+            // returns. `dumpsys package` emits far more than that (which is exactly what
+            // 更新 runs), so it hung forever; small commands like `pm` happened to fit.
+            val stdoutFuture = readAsync(process.inputStream)
+            val stderrFuture = readAsync(process.errorStream)
+
             val exitCode = process.waitFor()
-            @Suppress("DEPRECATION")
-            val stdout = process.inputStream.bufferedReader().readText()
-            val stderr = process.errorStream.bufferedReader().readText()
-            Result(exitCode, stdout, stderr)
+
+            Result(exitCode, stdoutFuture(), stderrFuture())
         } catch (e: Exception) {
             val reason = e.message ?: e.javaClass.simpleName
             Log.w(TAG, "Shizuku command failed: " + argv.joinToString(" ") + " -> " + reason)
             Result(exitCode = -1, stdout = "", stderr = reason)
         }
+    }
+
+    /**
+     * Starts draining a stream on its own thread, returning a blocking accessor for the text.
+     *
+     * A daemon thread is used so a stuck read can never keep the process alive.
+     */
+    private fun readAsync(stream: java.io.InputStream): () -> String {
+        val holder = java.util.concurrent.CompletableFuture.supplyAsync({
+            try {
+                @Suppress("DEPRECATION")
+                stream.bufferedReader().readText()
+            } catch (_: Exception) {
+                ""
+            }
+        }, Executors.newSingleThreadExecutor { r ->
+            Thread(r, "shizuku-stream").apply { isDaemon = true }
+        })
+        return { holder.get() }
     }
 
     /**
@@ -59,6 +87,9 @@ class ShizukuShell {
 
         /** toybox `find`; absolute path because PATH is not guaranteed. */
         const val FIND = "/system/bin/find"
+
+        /** `dumpsys`, used to read back the real enabled state of a component. */
+        const val DUMPSYS = "dumpsys"
 
         /** Explicit device path avoids relying on `/sdcard` symlink resolution. */
         const val EXTERNAL_DATA_ROOT = "/storage/emulated/0/Android/data"
