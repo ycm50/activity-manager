@@ -13,19 +13,23 @@ import java.util.Locale
  */
 object RecordsRepository {
 
-    /** Newest first, as rendered by the UI. */
+    /**
+     * Newest first.
+     *
+     * Sorts by timestamp instead of reversing the list: the reader already returns
+     * newest-first, and the old `asReversed()` therefore produced **oldest-first** export
+     * files (the UI showed newest-first while the report was the opposite). Sorting is
+     * idempotent, so callers may pass either order.
+     */
     fun newestFirst(all: List<ActivityRecord>): List<ActivityRecord> {
         if (all.size < 2) return all
-        return all.asReversed()
+        return all.sortedByDescending { it.timestamp }
     }
 
     fun filterRecords(all: List<ActivityRecord>, query: String): List<ActivityRecord> {
         val q = query.trim()
         if (q.isEmpty()) return all
-        return all.filter {
-            it.packageName.contains(q, ignoreCase = true) ||
-                it.activityClass.contains(q, ignoreCase = true)
-        }
+        return all.filter { MonitorFilters.matches(it, q) }
     }
 
     fun formatReport(records: List<ActivityRecord>, generatedAt: Long): String {

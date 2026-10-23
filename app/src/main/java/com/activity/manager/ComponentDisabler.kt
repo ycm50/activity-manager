@@ -1,5 +1,6 @@
 package com.activity.manager
 
+import android.util.Log
 
 /**
  * Disables and re-enables packages/components through Shizuku/Sui.
@@ -17,17 +18,46 @@ class ComponentDisabler(private val shell: ShizukuShell = ShizukuShell()) {
     sealed interface Outcome {
         data class Success(val message: String) : Outcome
         data class Failure(val message: String) : Outcome
+        /** Refused locally: no privileged command was executed at all. */
+        data class Refused(val message: String) : Outcome
     }
 
-    suspend fun disablePackage(packageName: String): Outcome = execute(
-        disablePackageArgs(packageName),
-        "Disabled package:$packageName"
-    )
+    suspend fun disablePackage(packageName: String): Outcome {
+        refuseIfProtected(packageName)?.let { return it }
+        return execute(
+            disablePackageArgs(packageName),
+            "Disabled package:$packageName"
+        )
+    }
 
-    suspend fun disableActivity(packageName: String, activityClass: String): Outcome = execute(
-        disableActivityArgs(packageName, activityClass),
-        "Disabled activity:$packageName/$activityClass"
-    )
+    suspend fun disableActivity(packageName: String, activityClass: String): Outcome {
+        // Activity-level and package-level are treated the same: disabling one activity of the
+        // installer is as harmful as disabling the package, and the requirement is that these
+        // components are never disabled.
+        refuseIfProtected(packageName)?.let { return it }
+        return execute(
+            disableActivityArgs(packageName, activityClass),
+            "Disabled activity:$packageName/$activityClass"
+        )
+    }
+
+    /**
+     * Last line of defence against disabling a system-critical package.
+     *
+     * The UI asks [DangerousComponentPolicy] first (which also sees the dynamic roles), but a
+     * request that reaches this class must still never run `pm` for a protected package — the
+     * whole point is that the device cannot be broken even if a call path misses the policy.
+     *
+     * Restores are deliberately **not** guarded: if something did get disabled, putting it
+     * back must always be possible.
+     */
+    private fun refuseIfProtected(packageName: String): Outcome.Refused? {
+        val entry = DangerousPackages.entryOf(packageName) ?: return null
+        if (entry.level != RiskLevel.BLOCK) return null
+
+        Log.w(TAG, "Refused to disable protected package " + packageName)
+        return Outcome.Refused(entry.displayName + "：" + entry.reason)
+    }
 
     /**
      * Restores a previously disabled component.
@@ -62,6 +92,8 @@ class ComponentDisabler(private val shell: ShizukuShell = ShizukuShell()) {
     }
 
     companion object {
+        private const val TAG = "ActivityMonitor"
+
         /** Binary name of the package manager; never routed through a shell. */
         const val PM = "pm"
         const val DISABLE = "disable"

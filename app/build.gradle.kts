@@ -3,6 +3,14 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// 版本号的唯一来源：
+//   - CI：release.yml 通过 -PappVersionCode=<int> -PappVersionName=<x.y.z> 注入
+//   - 本地 / Android Studio：使用下面的默认值
+// 用 providers.gradleProperty 而不是 findProperty，配置缓存才能正确追踪这个输入。
+// 之前 versionName 写死 "1.0"，CI 的 tag 已到 1.0.3 而 APK 内仍是 1.0，无法从安装包判断版本。
+val appVersionCode: Int = providers.gradleProperty("appVersionCode").orNull?.toIntOrNull() ?: 1
+val appVersionName: String = providers.gradleProperty("appVersionName").orNull ?: "1.0"
+
 android {
     namespace = "com.activity.manager"
     compileSdk {
@@ -15,8 +23,8 @@ android {
         applicationId = "com.activity.manager"
         minSdk = 34
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
 
     }
@@ -57,6 +65,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     compileOnly(libs.libxposed.api)
     implementation(libs.libxposed.service)
     implementation(libs.shizuku.api)

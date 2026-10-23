@@ -1,6 +1,7 @@
 package com.activity.manager
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -72,18 +73,18 @@ class ComponentStateCheckerTest {
 
         val ok = ComponentStateChecker.CheckResult(ComponentStateChecker.State.DISABLED, null)
         assertEquals(false, ok.isUnknown)
-        assertEquals(null, ok.reason)
+        assertNull(ok.reason)
     }
 
     @Test
     fun disabledPackageListIsParsed() {
-        val stdout = [
+        val stdout = listOf(
             "package:com.example.disabled1",
             "package:com.example.disabled2",
             "",
             "  package:com.example.spaced  ",
             "garbage line",
-        ].joinToString("\n")
+        ).joinToString("\n")
 
         val parsed = ComponentStateChecker.parseDisabledPackages(stdout)
         assertEquals(
@@ -173,16 +174,75 @@ class ComponentStateCheckerTest {
     }
 
     @Test
-    fun activityUsesItsOwnComponentLine() {
+    fun activityStateComesFromTheDisabledComponentsList() {
+        // Real shape on Android 16 / ColorOS: the override is not printed next to the
+        // component, it appears as its own block only when non-empty.
         val text = dump(
-            "    enabled=0",
-            "    Activity Resolver Table:",
-            "      com.example.app/.MainActivity:",
-            "        com.example.app/com.example.app.MainActivity filter abc",
-            "          enabled=2"
+            "  Package [com.example.app] (1234):",
+            "    User 0: installed=true enabled=0",
+            "      disabledComponents:",
+            "        com.example.app.MainActivity",
+            ""
         )
         assertEquals(
             ComponentStateChecker.State.DISABLED,
+            ComponentStateChecker.parse(text, activityEntry())
+        )
+    }
+
+    @Test
+    fun activityListedUnderEnabledComponentsIsEnabled() {
+        val text = dump(
+            "  Package [com.example.app] (1234):",
+            "    User 0: installed=true enabled=0",
+            "      enabledComponents:",
+            "        com.example.app.MainActivity",
+            ""
+        )
+        assertEquals(
+            ComponentStateChecker.State.ENABLED,
+            ComponentStateChecker.parse(text, activityEntry())
+        )
+    }
+
+    @Test
+    fun disabledPackageWinsOverAComponentOverride() {
+        val text = dump(
+            "    User 0: installed=true enabled=2",
+            "      enabledComponents:",
+            "        com.example.app.MainActivity",
+            ""
+        )
+        assertEquals(
+            ComponentStateChecker.State.DISABLED,
+            ComponentStateChecker.parse(text, activityEntry())
+        )
+    }
+
+    @Test
+    fun aRelativeStoredClassStillMatches() {
+        val text = dump(
+            "    User 0: installed=true enabled=0",
+            "      disabledComponents:",
+            "        com.example.app.MainActivity",
+            ""
+        )
+        assertEquals(
+            ComponentStateChecker.State.DISABLED,
+            ComponentStateChecker.parse(text, activityEntry(cls = ".MainActivity"))
+        )
+    }
+
+    @Test
+    fun anUnrelatedComponentDoesNotMatch() {
+        val text = dump(
+            "    User 0: installed=true enabled=0",
+            "      disabledComponents:",
+            "        com.example.app.OtherActivity",
+            ""
+        )
+        assertEquals(
+            ComponentStateChecker.State.ENABLED,
             ComponentStateChecker.parse(text, activityEntry())
         )
     }
@@ -203,9 +263,10 @@ class ComponentStateCheckerTest {
     @Test
     fun activityWithEnabledComponentIsEnabled() {
         val text = dump(
-            "    enabled=2",
-            "      com.example.app/com.example.app.MainActivity",
-            "        enabled=1"
+            "    User 0: installed=true enabled=0",
+            "      enabledComponents:",
+            "        com.example.app.MainActivity",
+            ""
         )
         assertEquals(
             ComponentStateChecker.State.ENABLED,

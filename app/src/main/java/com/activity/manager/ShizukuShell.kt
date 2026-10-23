@@ -3,6 +3,7 @@ package com.activity.manager
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import rikka.shizuku.Shizuku
 
@@ -47,21 +48,20 @@ class ShizukuShell {
     }
 
     /**
-     * Starts draining a stream on its own thread, returning a blocking accessor for the text.
+     * Starts draining a stream on the shared pool, returning a blocking accessor for the text.
      *
-     * A daemon thread is used so a stuck read can never keep the process alive.
+     * The pool is shared and cached: the previous version created a single-thread executor
+     * per call and never shut it down, so every privileged command leaked two threads (they
+     * were daemon threads, so nothing crashed — the count just grew with every refresh).
      */
     private fun readAsync(stream: java.io.InputStream): () -> String {
         val holder = java.util.concurrent.CompletableFuture.supplyAsync({
             try {
-                @Suppress("DEPRECATION")
-                stream.bufferedReader().readText()
+                stream.use { it.readBytes().toString(Charsets.UTF_8) }
             } catch (_: Exception) {
                 ""
             }
-        }, Executors.newSingleThreadExecutor { r ->
-            Thread(r, "shizuku-stream").apply { isDaemon = true }
-        })
+        }, STREAM_POOL)
         return { holder.get() }
     }
 
@@ -88,10 +88,23 @@ class ShizukuShell {
         /** toybox `find`; absolute path because PATH is not guaranteed. */
         const val FIND = "/system/bin/find"
 
+        /** toybox `rm`; absolute path for the same reason. */
+        const val RM = "/system/bin/rm"
+
         /** `dumpsys`, used to read back the real enabled state of a component. */
         const val DUMPSYS = "dumpsys"
 
         /** Explicit device path avoids relying on `/sdcard` symlink resolution. */
         const val EXTERNAL_DATA_ROOT = "/storage/emulated/0/Android/data"
+
+        /**
+         * Shared daemon pool draining child pipes.
+         *
+         * Cached rather than fixed: a fixed pool of 2 would deadlock when two commands run
+         * concurrently (each needs 2 threads). Idle threads expire, so nothing accumulates.
+         */
+        private val STREAM_POOL: ExecutorService = Executors.newCachedThreadPool { r ->
+            Thread(r, "shizuku-stream").apply { isDaemon = true }
+        }
     }
 }

@@ -9,6 +9,62 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      包可见性白名单（Android 11+）。
+      本模块**故意不申请 QUERY_ALL_PACKAGES**：只需要为常看的应用显示图标与中文名。
+      不在本表里的应用照常被 hook、照常出现在列表、照常可禁用，只是显示为包名 + 首字母头像。
+      想覆盖全部应用时，把下面整段替换为一条 QUERY_ALL_PACKAGES 即可，Kotlin 侧无需改动
+      （AppInfoResolver 本来就是「查得到就显示，查不到就降级」）。
+
+      系统关键包（安装器 / SystemUI / 桌面等）的中文名内置在 DangerousPackages 表里，
+      不依赖包可见性，所以这里不需要重复声明。
+    -->
+    <queries>
+        <package android:name="com.tencent.mm" />
+        <package android:name="com.tencent.mobileqq" />
+        <package android:name="com.tencent.tim" />
+        <package android:name="com.tencent.wework" />
+        <package android:name="com.alibaba.android.rimet" />
+        <package android:name="com.eg.android.AlipayGphone" />
+        <package android:name="com.taobao.taobao" />
+        <package android:name="com.tmall.wireless" />
+        <package android:name="com.jingdong.app.mall" />
+        <package android:name="com.xunmeng.pinduoduo" />
+        <package android:name="com.taobao.idlefish" />
+        <package android:name="com.sankuai.meituan" />
+        <package android:name="me.ele" />
+        <package android:name="com.autonavi.minimap" />
+        <package android:name="com.baidu.BaiduMap" />
+        <package android:name="com.MobileTicket" />
+        <package android:name="tv.danmaku.bili" />
+        <package android:name="com.netease.cloudmusic" />
+        <package android:name="com.tencent.qqmusic" />
+        <package android:name="com.kugou.android" />
+        <package android:name="com.zhihu.android" />
+        <package android:name="com.douban.frodo" />
+        <package android:name="com.smile.gifmaker" />
+        <package android:name="com.termux" />
+        <package android:name="com.android.vending" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.tencent.mtt" />
+        <package android:name="com.UCMobile" />
+        <package android:name="com.quark.browser" />
+        <package android:name="com.microsoft.emmx" />
+        <package android:name="com.baidu.searchbox" />
+        <package android:name="com.ss.android.lark" />
+        <package android:name="cn.wps.moffice_eng" />
+        <package android:name="com.netease.mail" />
+        <package android:name="com.tencent.androidqqmail" />
+        <package android:name="com.sdu.didi.psnger" />
+        <package android:name="com.unionpay" />
+        <package android:name="com.sohu.inputmethod.sogou" />
+        <package android:name="com.baidu.input" />
+        <package android:name="com.deepseek.chat" />
+        <package android:name="com.openai.chatgpt" />
+        <package android:name="com.github.android" />
+        <package android:name="org.telegram.messenger" />
+    </queries>
+
     <application
         android:name=".App"
         android:allowBackup="true"

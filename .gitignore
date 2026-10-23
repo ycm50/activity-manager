@@ -32,3 +32,6 @@ app/build-err.txt
 # 工具/编辑器
 *.log
 .idea/caches/
+
+# 探测/验证用的临时脚本（不随项目入库）
+/tmpscripts/

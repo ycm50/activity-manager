@@ -1,6 +1,7 @@
 package com.activity.manager
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -62,12 +63,13 @@ class HookEventCodecTest {
             "123|com.a",                      // only two fields
             "123||.B",                        // empty package
             "123|com.a|",                     // empty class
-            "123|com.a|.B|extra",             // class keeps the remainder, still valid
+            "123|com.a|.B|junk",              // extras without '=' are ignored
             good
         ).joinToString("\n")
 
         val parsed = HookEventCodec.parse(text)
-        assertEquals(2, parsed.size) // the 4-field line is valid, class = ".B|extra"
+        assertEquals(2, parsed.size) // the 4-field line stays valid, extras just parse to null
+        assertEquals(".B", parsed.first().event.activityClass)
         assertEquals(good, parsed.last().raw)
     }
 
@@ -97,5 +99,50 @@ class HookEventCodecTest {
     fun constantsMatchTheOnDeviceLayout() {
         assertEquals("activity_monitor", HookEventCodec.DIRECTORY_NAME)
         assertEquals("events.log", HookEventCodec.FILE_NAME)
+    }
+
+    @Test
+    fun newIntentEventRoundTripsWithEveryExtraColumn() {
+        val event = HookEvent(
+            timestamp = 1_700_000_000_000L,
+            packageName = "com.example.app",
+            activityClass = "com.example.app.MainActivity",
+            kind = HookEventKind.NEW_INTENT,
+            intentAction = "android.intent.action.VIEW",
+            // Deliberately full of separator characters: the 4th column must not be ambiguous.
+            intentData = "https://example.com/a?b=c|d;e",
+            referrer = "com.caller",
+            launchedFromPackage = "com.caller",
+            taskId = 42,
+            processName = "com.example.app:main",
+            extrasSummary = HookExtras.encodeSummary(
+                listOf("id" to "7", "token" to SensitiveKeys.MASK)
+            )
+        )
+
+        val parsed = HookEventCodec.parse(HookEventCodec.encode(event) + "\n")
+
+        assertEquals(1, parsed.size)
+        assertEquals(event, parsed.single().event)
+    }
+
+    @Test
+    fun fourthColumnNeverLeaksIntoTheClassName() {
+        val parsed = HookEventCodec.parse("123|com.a|.B|et=n").single()
+
+        assertEquals(".B", parsed.event.activityClass)
+        assertEquals(HookEventKind.NEW_INTENT, parsed.event.kind)
+    }
+
+    @Test
+    fun legacyThreeColumnLineStillYieldsADefaultEvent() {
+        val parsed = HookEventCodec.parse("1700000000000|com.legacy|com.legacy.A").single()
+
+        assertEquals(1700000000000L, parsed.event.timestamp)
+        assertEquals("com.legacy", parsed.event.packageName)
+        assertEquals("com.legacy.A", parsed.event.activityClass)
+        assertEquals(HookEventKind.CREATED, parsed.event.kind)
+        assertNull(parsed.event.intentAction)
+        assertNull(parsed.event.extrasSummary)
     }
 }

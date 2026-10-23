@@ -95,6 +95,13 @@ class ComponentStateChecker(private val shell: ShizukuShell) {
     companion object {
         private const val PACKAGE_PREFIX = "package:"
 
+        /**
+         * Section headers that carry per-component overrides. They only appear when the list
+         * is non-empty.
+         */
+        private const val DISABLED_COMPONENTS_SETTING = "disabledComponents:"
+        private const val ENABLED_COMPONENTS_SETTING = "enabledComponents:"
+
         /** Values `dumpsys` uses to mean "off". */
         private val DISABLED_VALUES = setOf(
             "disabled",
@@ -119,8 +126,9 @@ class ComponentStateChecker(private val shell: ShizukuShell) {
         /**
          * Resolves the state of [entry] from `dumpsys package` output.
          *
-         * For an activity it looks for the component block; otherwise it uses the
-         * package-level `enabled=` flag. Pure, so it is unit-tested on the JVM.
+         * For an activity it first checks whether the whole package is disabled, then reads the
+         * per-component override list; otherwise it uses the package-level `enabled=` flag.
+         * Pure, so it is unit-tested on the JVM.
          */
         fun parse(dump: String, entry: DisableHistoryEntry): State {
             if (dump.isBlank()) return State.UNKNOWN
@@ -131,31 +139,65 @@ class ComponentStateChecker(private val shell: ShizukuShell) {
             val lines = dump.lineSequence().map { it.trim() }.toList()
 
             if (entry.isActivity) {
-                componentState(lines, entry)?.let { return it }
-                // A disabled *package* disables its components too, so fall back to it.
-                return packageState(lines) ?: State.UNKNOWN
+                val packageState = packageState(lines)
+                // A disabled package disables every component in it, whatever the component
+                // override says.
+                if (packageState == State.DISABLED) return State.DISABLED
+                componentOverride(lines, entry)?.let { return it }
+                return packageState ?: State.UNKNOWN
             }
 
             return packageState(lines) ?: State.UNKNOWN
         }
 
         /**
-         * Finds `<pkg>/<class> ... enabled=<value>`.
+         * Reads the `disabledComponents:` / `enabledComponents:` override list.
          *
-         * `dumpsys` may write the class fully qualified or with a leading dot, so the simple
-         * class name is matched instead of the exact string.
+         * Component overrides are **not** printed next to the component. `dumpsys package`
+         * emits one block of overridden class names inside the package's user section, and only
+         * when the list is non-empty:
+         *
+         * ```
+         *       disabledComponents:
+         *         com.android.certinstaller.CertInstallerMain
+         * ```
+         *
+         * The previous implementation looked for `enabled=` on the component line, found
+         * nothing on Android 16 (verified on device), and silently fell back to the package
+         * state — so a disabled activity was reported as "enabled" and 更新 deleted the history
+         * entry the user still needed to restore.
          */
-        private fun componentState(lines: List<String>, entry: DisableHistoryEntry): State? {
+        private fun componentOverride(lines: List<String>, entry: DisableHistoryEntry): State? {
             val cls = entry.activityClass ?: return null
-            val short = cls.substringAfterLast('.')
-            val header = entry.packageName + "/"
+            var mode: State? = null
 
             for (line in lines) {
-                if (!line.startsWith(header)) continue
-                if (!line.contains(short)) continue
-                enabledValue(line)?.let { return stateOf(it) }
+                when {
+                    line.isEmpty() -> mode = null
+                    line == DISABLED_COMPONENTS_SETTING ->
+                        mode = State.DISABLED
+                    line == ENABLED_COMPONENTS_SETTING ->
+                        mode = State.ENABLED
+                    // Any other section header ends the list.
+                    line.endsWith(":") -> mode = null
+                    mode != null && matchesComponent(line, entry.packageName, cls) -> return mode
+                }
             }
             return null
+        }
+
+        /**
+         * Compares one entry of the override list with the stored component.
+         *
+         * The list prints fully qualified names, but a stored class may be relative (a leading
+         * dot) on some paths, so both forms are accepted. The simple name alone is never
+         * enough — it is shared with unrelated packages.
+         */
+        private fun matchesComponent(line: String, packageName: String, cls: String): Boolean {
+            val normalized = if (cls.startsWith(".")) packageName + cls else cls
+            if (line == normalized) return true
+            return line.substringAfterLast('.') == normalized.substringAfterLast('.') &&
+                line.contains(packageName)
         }
 
         /** Package-level `enabled=`, preferring the per-user resolved value. */

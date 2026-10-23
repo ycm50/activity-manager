@@ -8,8 +8,10 @@ import java.util.TimeZone
 
 class RecordsRepositoryTest {
 
-    private fun record(id: Long, pkg: String, cls: String, ts: Long = id) =
-        ActivityRecord(id = id, packageName = pkg, activityClass = cls, timestamp = ts)
+    // Timestamps are seconds apart *1000: the report formatter prints whole seconds, so a
+    // fixture using raw 1/2/3 milliseconds rendered every row as 00:00:00.
+    private fun record(id: Long, pkg: String, cls: String, ts: Long = id * 1_000L) =
+        ActivityRecord(key = "raw-$id", packageName = pkg, activityClass = cls, timestamp = ts)
 
     private val sample = listOf(
         record(1, "com.android.settings", "com.android.settings.Settings"),
@@ -48,8 +50,28 @@ class RecordsRepositoryTest {
     }
 
     @Test
-    fun newestFirstReversesInsertionOrder() {
-        assertEquals(listOf(3L, 2L, 1L), RecordsRepository.newestFirst(sample).map { it.id })
+    fun newestFirstSortsNewestFirst() {
+        assertEquals(
+            listOf("raw-3", "raw-2", "raw-1"),
+            RecordsRepository.newestFirst(sample).map { it.key }
+        )
+    }
+
+    @Test
+    fun newestFirstIsIdempotent() {
+        // The reader already returns newest-first; the export path used to reverse that a
+        // second time and produce an oldest-first report.
+        val once = RecordsRepository.newestFirst(sample)
+        assertEquals(once.map { it.key }, RecordsRepository.newestFirst(once).map { it.key })
+    }
+
+    @Test
+    fun newestFirstIgnoresInsertionOrder() {
+        val shuffled = listOf(sample[1], sample[2], sample[0])
+        assertEquals(
+            listOf("raw-3", "raw-2", "raw-1"),
+            RecordsRepository.newestFirst(shuffled).map { it.key }
+        )
     }
 
     @Test
@@ -63,7 +85,13 @@ class RecordsRepositoryTest {
         val previous = TimeZone.getDefault()
         try {
             TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
-            val text = RecordsRepository.formatReport(sample, generatedAt = 0L)
+            // The exporter renders an already newest-first list (MainActivity passes
+            // newestFirst(...) into formatReport), so the fixture must be ordered the same
+            // way. Rendering `sample` as-is used to assert the opposite order and fail.
+            val text = RecordsRepository.formatReport(
+                RecordsRepository.newestFirst(sample),
+                generatedAt = 0L
+            )
             val lines = text.lines()
 
             assertEquals("=== Activity Monitor Report ===", lines[0])

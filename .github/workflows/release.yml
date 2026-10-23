@@ -70,9 +70,13 @@ jobs:
           fi
 
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          # versionCode 与 semver 同序且单调递增：MAJOR*10000 + MINOR*100 + PATCH
+          # 之前 versionCode 恒为 1，APK 无法从包信息判断新旧。
+          VERSION_CODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
           echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "versionCode=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
           echo "Previous tag: ${LATEST_TAG:-<none>}"
-          echo "New version:  ${NEW_VERSION}"
+          echo "New version:  ${NEW_VERSION} (code ${VERSION_CODE})"
 
       # ── 3. 环境准备 ───────────────────────────────────────────────
       - name: Set up JDK 17
@@ -175,19 +179,19 @@ jobs:
             && echo "Keystore verified" \
             || { echo "::error::密钥库校验失败"; exit 1; }
 
-      # ── 6. 注入版本号 + Release 构建 ────────────────────────────
-      - name: Inject versionName for build
-        run: |
-          sed -i \
-            "s/versionName = \".*\"/versionName = \"${{ steps.version.outputs.version }}\"/" \
-            app/build.gradle.kts
-          echo "Injected versionName = ${{ steps.version.outputs.version }}"
-
+      # ── 6. Release 构建（版本号通过 -P 注入）──────────────────────
+      # 不再用 sed 改写 app/build.gradle.kts：改写源码会让检出树变脏，
+      # 且格式一变就静默不生效。现在由 build.gradle.kts 读取 gradle 属性。
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Build unsigned Release APK
-        run: ./gradlew -I init-ci.gradle assembleRelease
+        run: |
+          ./gradlew -I init-ci.gradle \
+            -PappVersionCode=${{ steps.version.outputs.versionCode }} \
+            -PappVersionName=${{ steps.version.outputs.version }} \
+            assembleRelease
+          echo "Built version ${{ steps.version.outputs.version }} (code ${{ steps.version.outputs.versionCode }})"
 
       # ── 7. 对齐 + 签名 APK ──────────────────────────────────────
       - name: Sign APK with apksigner
