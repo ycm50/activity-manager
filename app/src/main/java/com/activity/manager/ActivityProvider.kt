@@ -1,4 +1,4 @@
-package com.lspo
+package com.activity.manager
 
 import android.content.ContentProvider
 import android.content.ContentValues
@@ -74,18 +74,20 @@ class ActivityProvider : ContentProvider() {
     }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
+        val count: Int
         synchronized(records) {
-            val count = records.size
+            count = records.size
             records.clear()
-            return count
         }
+        context?.contentResolver?.notifyChange(uri, null)
+        return count
     }
 
     override fun getType(uri: Uri): String = "vnd.android.cursor.dir/vnd.lspo.activity"
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
 
     companion object {
-        const val AUTHORITY = "com.lspo.provider"
+        const val AUTHORITY = "com.activity.manager.provider"
         val CONTENT_URI = Uri.parse("content://$AUTHORITY/activities")
     }
 }

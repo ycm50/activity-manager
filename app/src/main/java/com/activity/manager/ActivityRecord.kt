@@ -1,4 +1,4 @@
-package com.lspo
+package com.activity.manager
 
 data class ActivityRecord(
     val id: Long = 0,

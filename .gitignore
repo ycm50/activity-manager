@@ -12,3 +12,6 @@
 local.properties
 .kotlin/
 .reasonix/
+*.apk
+build-err.txt
+shizuku.java

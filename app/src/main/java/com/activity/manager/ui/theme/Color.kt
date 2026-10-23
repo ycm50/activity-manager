@@ -1,4 +1,4 @@
-package com.lspo.ui.theme
+package com.activity.manager.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

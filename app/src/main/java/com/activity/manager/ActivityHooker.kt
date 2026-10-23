@@ -1,4 +1,4 @@
-package com.lspo
+package com.activity.manager
 
 import android.content.ContentValues
 import android.content.Context

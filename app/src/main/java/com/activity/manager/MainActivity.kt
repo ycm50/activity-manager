@@ -1,4 +1,4 @@
-package com.lspo
+package com.activity.manager
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
@@ -17,6 +18,11 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.MutableState
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
@@ -35,7 +41,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -62,7 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.lspo.ui.theme.LspoTheme
+import com.activity.manager.ui.theme.LspoTheme
 import kotlinx.coroutines.Dispatchers
 import rikka.shizuku.Shizuku
 import kotlinx.coroutines.launch
@@ -81,11 +86,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
         enableEdgeToEdge()
+
         setContent {
+            val permissionState = remember { mutableStateOf(ShizukuState.IDLE) }
+            val permissionText = remember { mutableStateOf("Shizuku") }
+
             LspoTheme {
                 ActivityMonitorScreen(
                     contentResolver = contentResolver,
-                    onSave = { records -> saveToDownloads(records) },
+                    permissionState = permissionState.value,
+                    permissionText = permissionText.value,
+                    onRequestShizuku = {
+                        requestShizukuPermission(permissionState, permissionText)
+                    },
                     onClear = { clearRecords() },
                     onCopyActivity = { text -> copyToClipboard(text) },
                     onDisablePackage = { pkg -> disablePackage(pkg) },
@@ -99,7 +112,141 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    private fun requestShizukuPermission(
+        state: MutableState<ShizukuState>,
+        label: MutableState<String>
+    ) {
+        // 如果已连接，先清除状态，再重新申请
+        if (state.value == ShizukuState.GRANTED) {
+            state.value = ShizukuState.IDLE
+            label.value = "Shizuku"
+        }
 
+        state.value = ShizukuState.REQUESTING
+        label.value = "Shizuku..."
+
+        // ===== Phase 1: 先走 Shizuku 通道 =====
+        tryPhase1(state, label)
+    }
+
+    private fun tryPhase1(
+        state: MutableState<ShizukuState>,
+        label: MutableState<String>
+    ) {
+        val deferred = CompletableDeferred<Int?>()
+
+        val listener = { requestCode: Int, grantResult: Int ->
+            if (requestCode == SHIZUKU_REQUEST_CODE) {
+                deferred.complete(grantResult)
+            }
+        }
+
+        try {
+            Shizuku.addRequestPermissionResultListener(listener)
+            Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+        } catch (_: Exception) {
+            // Shizuku 未运行（binder 不存在），直接 fallback 到 Sui
+            Shizuku.removeRequestPermissionResultListener(listener)
+            tryPhase2(state, label)
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                val result = withTimeout(5000L) { deferred.await() }
+                handleResult(result, state, label)
+            } catch (_: TimeoutCancellationException) {
+                // Phase 1 超时 → fallback 到 Phase 2: Sui
+                Shizuku.removeRequestPermissionResultListener(listener)
+                Toast.makeText(this@MainActivity, "Shizuku 无响应，尝试 Sui", Toast.LENGTH_SHORT).show()
+                tryPhase2(state, label)
+            }
+        }
+    }
+
+    private fun tryPhase2(
+        state: MutableState<ShizukuState>,
+        label: MutableState<String>
+    ) {
+        // 手动初始化 Sui（已在 App.attachBaseContext 中禁用了自动初始化）
+        val suiAvailable = try {
+            rikka.sui.Sui.init(this.packageName)
+        } catch (_: Exception) {
+            false
+        }
+
+        if (!suiAvailable) {
+            state.value = ShizukuState.IDLE
+            label.value = "Shizuku"
+            Toast.makeText(this@MainActivity, "Sui 不可用", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        label.value = "Sui..."
+
+        val deferred = CompletableDeferred<Int?>()
+
+        val listener = { requestCode: Int, grantResult: Int ->
+            if (requestCode == SHIZUKU_REQUEST_CODE) {
+                deferred.complete(grantResult)
+            }
+        }
+
+        try {
+            Shizuku.addRequestPermissionResultListener(listener)
+            Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+        } catch (_: Exception) {
+            // Sui binder 也不可用，安全重置
+            Shizuku.removeRequestPermissionResultListener(listener)
+            state.value = ShizukuState.IDLE
+            label.value = "Shizuku"
+            Toast.makeText(this@MainActivity, "权限服务不可用", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        lifecycleScope.launch {
+            try {
+                val result = withTimeout(5000L) { deferred.await() }
+                handleResult(result, state, label)
+            } catch (_: TimeoutCancellationException) {
+                state.value = ShizukuState.IDLE
+                label.value = "Shizuku"
+                Toast.makeText(this@MainActivity, "获取权限超时", Toast.LENGTH_SHORT).show()
+            } finally {
+                Shizuku.removeRequestPermissionResultListener(listener)
+            }
+        }
+    }
+
+    private fun handleResult(
+        result: Int?,
+        state: MutableState<ShizukuState>,
+        label: MutableState<String>
+    ) {
+        if (result == PackageManager.PERMISSION_GRANTED) {
+            state.value = ShizukuState.GRANTED
+            label.value = detectPermissionSource()
+        } else {
+            state.value = ShizukuState.IDLE
+            label.value = "Shizuku"
+            Toast.makeText(this@MainActivity, "权限被拒绝", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun detectPermissionSource(): String {
+        return try {
+            val uid = Shizuku.getUid()
+            val level = when (uid) {
+                0 -> "root"
+                2000 -> "shell"
+                else -> "uid=$uid"
+            }
+            val source = if (rikka.sui.Sui.isSui()) "sui" else "shizuku"
+            "$source($level)"
+        } catch (_: Exception) {
+            "shizuku(?)"
+        }
+    }
 
     private fun copyToClipboard(text: String) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -286,6 +433,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val SHIZUKU_REQUEST_CODE = 1001
         private const val CHANNEL_ID = "activity_monitor_save"
         private var NOTIFICATION_ID = 1000
     }
@@ -295,7 +443,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ActivityMonitorScreen(
     contentResolver: ContentResolver,
-    onSave: (List<ActivityRecord>) -> Unit,
+    permissionState: ShizukuState,
+    permissionText: String,
+    onRequestShizuku: () -> Unit,
     onClear: () -> Unit,
     onCopyActivity: (String) -> Unit,
     onDisablePackage: (String) -> Unit,
@@ -342,12 +492,29 @@ fun ActivityMonitorScreen(
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ),
                 actions = {
-                    IconButton(onClick = { onSave(filtered.toList()) }) {
-                        Icon(
-                            Icons.Filled.Save,
-                            contentDescription = "Save",
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
+                    androidx.compose.material3.Surface(
+                        onClick = onRequestShizuku,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            if (permissionState == ShizukuState.REQUESTING) {
+                                Text(
+                                    text = "...",
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            } else {
+                                Text(
+                                    text = permissionText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
                     }
                 }
             )
@@ -519,6 +686,12 @@ private suspend fun loadRecords(
     } catch (_: Exception) {
         // Provider not ready or no permission
     }
+}
+
+enum class ShizukuState {
+    IDLE,
+    REQUESTING,
+    GRANTED
 }
 
 private fun applyFilter(

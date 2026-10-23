@@ -1,4 +1,4 @@
-package com.lspo.ui.theme
+package com.activity.manager.ui.theme
 
 import android.app.Activity
 import android.os.Build
